@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Live ATC WebPlayer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #1a1a1a;
+            color: #fff;
+        }
+
+        .stream-container {
+            background-color: #333;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stream-title {
+            font-size: 1.2em;
+            margin-bottom: 10px;
+            color: #4CAF50;
+        }
+
+        .channel-container {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 10px;
+        }
+
+        .channel {
+            flex: 1;
+            background-color: #444;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        canvas {
+            width: 100%;
+            height: 60px;
+            background-color: #222;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 14px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        button.muted {
+            background-color: #f44336;
+        }
+
+        button.muted:hover {
+            background-color: #da190b;
+        }
+    </style>
+</head>
+<body>
+    <div id="streams-container"></div>
+
+    <script>
+        const PROXY_URL = "https://api.allorigins.win/raw?url=";
+
+        const streams = [
+            { name: "LROP 1 (BOS)", url: PROXY_URL + encodeURIComponent("http://s1-bos.liveatc.net/lrop") },
+            { name: "LROP 2 (BOS)", url: PROXY_URL + encodeURIComponent("http://s1-bos.liveatc.net/lrop2") },
+            { name: "LROP 3 (FMT2)", url: PROXY_URL + encodeURIComponent("http://s1-fmt2.liveatc.net/lrop") },
+            { name: "LROP 4 (FMT2)", url: PROXY_URL + encodeURIComponent("http://s1-fmt2.liveatc.net/lrop2") },
+            { name: "LRBV (BOS)", url: PROXY_URL + encodeURIComponent("http://s1-bos.liveatc.net/lrbv2") },
+            { name: "LRSB (BOS)", url: PROXY_URL + encodeURIComponent("http://s1-bos.liveatc.net/lrsb2") },
+            { name: "LRCL (FMT2)", url: PROXY_URL + encodeURIComponent("http://s1-fmt2.liveatc.net/lrcl") },
+            { name: "LRTR (BOS)", url: PROXY_URL + encodeURIComponent("http://s1-bos.liveatc.net/lrtr") }
+        ];
+
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const streamElements = [];
+
+        function createStreamElement(stream, index) {
+            const container = document.createElement('div');
+            container.className = 'stream-container';
+            container.innerHTML = `
+                <div class="stream-title">${stream.name}</div>
+                <div class="channel-container">
+                    <div class="channel">
+                        <canvas id="canvas-left-${index}"></canvas>
+                        <button class="mute-btn" data-stream="${index}" data-channel="left">Unmute Left</button>
+                    </div>
+                    <div class="channel">
+                        <canvas id="canvas-right-${index}"></canvas>
+                        <button class="mute-btn" data-stream="${index}" data-channel="right">Unmute Right</button>
+                    </div>
+                </div>
+            `;
+            return container;
+        }
+
+        function initializeStream(stream, index) {
+            const audio = new Audio(stream.url);
+            audio.crossOrigin = "anonymous";
+            audio.loop = true;
+
+            const source = audioContext.createMediaElementSource(audio);
+            const splitter = audioContext.createChannelSplitter(2);
+
+            const leftGain = audioContext.createGain();
+            const rightGain = audioContext.createGain();
+
+            const leftAnalyser = audioContext.createAnalyser();
+            const rightAnalyser = audioContext.createAnalyser();
+
+            leftAnalyser.fftSize = 2048;
+            rightAnalyser.fftSize = 2048;
+
+            source.connect(splitter);
+            splitter.connect(leftGain, 0);
+            splitter.connect(rightGain, 1);
+
+            leftGain.connect(leftAnalyser);
+            rightGain.connect(rightAnalyser);
+
+            leftAnalyser.connect(audioContext.destination);
+            rightAnalyser.connect(audioContext.destination);
+
+            leftGain.gain.value = 0;
+            rightGain.gain.value = 0;
+
+            return {
+                audio,
+                leftGain,
+                rightGain,
+                leftAnalyser,
+                rightAnalyser,
+                leftCanvas: document.getElementById(`canvas-left-${index}`),
+                rightCanvas: document.getElementById(`canvas-right-${index}`)
+            };
+        }
+
+        function visualize(analyser, canvas) {
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            const ctx = canvas.getContext('2d');
+
+            function draw() {
+                analyser.getByteTimeDomainData(dataArray);
+
+                ctx.fillStyle = '#222';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#4CAF50';
+                ctx.beginPath();
+
+                const sliceWidth = canvas.width * 1.0 / bufferLength;
+                let x = 0;
+
+                for (let i = 0; i < bufferLength; i++) {
+                    const v = dataArray[i] / 128.0;
+                    const y = v * canvas.height / 2;
+
+                    if (i === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+
+                    x += sliceWidth;
+                }
+
+                ctx.stroke();
+                requestAnimationFrame(draw);
+            }
+
+            draw();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const container = document.getElementById('streams-container');
+
+            streams.forEach((stream, index) => {
+                const element = createStreamElement(stream, index);
+                container.appendChild(element);
+
+                const streamData = initializeStream(stream, index);
+                streamElements.push(streamData);
+
+                visualize(streamData.leftAnalyser, streamData.leftCanvas);
+                visualize(streamData.rightAnalyser, streamData.rightCanvas);
+            });
+
+            document.querySelectorAll('.mute-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    const streamIndex = parseInt(this.dataset.stream);
+                    const channel = this.dataset.channel;
+                    const stream = streamElements[streamIndex];
+                    const isLeft = channel === 'left';
+                    const gainNode = isLeft ? stream.leftGain : stream.rightGain;
+
+                    if (gainNode.gain.value === 0) {
+                        if (stream.audio.paused) {
+                            stream.audio.play().catch(err => console.error('Error playing audio:', err));
+                        }
+                        gainNode.gain.value = 1;
+                        this.textContent = `Mute ${isLeft ? 'Left' : 'Right'}`;
+                        this.classList.remove('muted');
+                    } else {
+                        gainNode.gain.value = 0;
+                        this.textContent = `Unmute ${isLeft ? 'Left' : 'Right'}`;
+                        this.classList.add('muted');
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>
